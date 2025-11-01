@@ -3,7 +3,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia
 from typing import Optional
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
-from widgets.slider_widget import SeekSlider
+from widgets.slider_widget import SeekSlider, VolumeSlider
 from typing import List
 from pathlib import Path
 from utils import is_video_file, find_similar_files
@@ -52,6 +52,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.iconPause = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaPause)
         self.iconPrev = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSkipBackward)
         self.iconNext = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSkipForward)
+        self.iconVolume = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaVolume)
+        # Some styles may not provide muted icon; fall back to the same icon
+        try:
+            self.iconVolumeMuted = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaVolumeMuted)  # type: ignore[attr-defined]
+        except Exception:
+            self.iconVolumeMuted = self.iconVolume
 
         # Icon-only minimalist buttons (same size, Play ~5% larger)
         self.playButton.setText("")
@@ -88,6 +94,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.playButton.setStyleSheet(
             minimalStyle.replace("border-radius: 16px;", f"border-radius: {int(play_btn/2)}px;")
         )
+
+        # Audio controls
+        self.muteButton = QtWidgets.QPushButton("")
+        self.muteButton.setIcon(self.iconVolume)
+        self.muteButton.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self.muteButton.setFixedSize(28, 28)
+        self.muteButton.setIconSize(QtCore.QSize(18, 18))
+        self.muteButton.setStyleSheet(minimalStyle.replace("border-radius: 16px;", "border-radius: 14px;"))
+        self.muteButton.clicked.connect(self.toggle_mute)
+
+        self.volumeSlider = VolumeSlider(QtCore.Qt.Orientation.Horizontal)
+        self.volumeSlider.setFixedWidth(120)
+        self.volumeSlider.setValue(50)
+        # Initialize audio output volume to match slider (0.0 - 1.0)
+        try:
+            self.audioOutput.setVolume(self.volumeSlider.value() / 100.0)
+        except Exception:
+            pass
+        self._lastNonZeroVolume = self.volumeSlider.value()
+        self.volumeSlider.valueChanged.connect(self.on_volume_changed)
 
         # Timeline (progress bar) and time labels
         self.labelCurrentTime = QtWidgets.QLabel("00:00")
@@ -126,6 +152,10 @@ class MainWindow(QtWidgets.QMainWindow):
         mediaControlsBottom.addWidget(self.playButton)
         mediaControlsBottom.addSpacing(6)
         mediaControlsBottom.addWidget(self.nextButton)
+        mediaControlsBottom.addSpacing(12)
+        mediaControlsBottom.addWidget(self.muteButton)
+        mediaControlsBottom.addSpacing(6)
+        mediaControlsBottom.addWidget(self.volumeSlider)
         mediaControlsBottom.addStretch(1)
 
         mainLayout.addLayout(contentLayout, stretch=1)
@@ -148,6 +178,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.positionSlider.sliderReleased.connect(self.on_seek_released)
         self.positionSlider.sliderMoved.connect(self.on_slider_moved)
         self.positionSlider.clickedTo.connect(self.on_slider_clicked)
+
+        # Keep icon in sync when playback state changes (already handled); also reflect mute state
+        try:
+            self.audioOutput.mutedChanged.connect(self._update_mute_icon)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # ------------------- UI/Actions -------------------
     def open_files(self) -> None:
@@ -303,6 +339,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self._isSeeking = False
         self.mediaPlayer.setPosition(int(value))
         self.labelCurrentTime.setText(self._format_msec(int(value)))
+
+    # ------------------- Volume / Mute -------------------
+    def on_volume_changed(self, value: int) -> None:
+        vol = max(0, min(100, int(value)))
+        try:
+            self.audioOutput.setVolume(vol / 100.0)
+        except Exception:
+            pass
+        if vol > 0:
+            self._lastNonZeroVolume = vol
+            try:
+                if self.audioOutput.isMuted():
+                    self.audioOutput.setMuted(False)
+            except Exception:
+                pass
+        else:
+            try:
+                self.audioOutput.setMuted(True)
+            except Exception:
+                pass
+        self._update_mute_icon()
+
+    def toggle_mute(self) -> None:
+        try:
+            new_muted = not self.audioOutput.isMuted()
+            self.audioOutput.setMuted(new_muted)
+            if not new_muted and self.volumeSlider.value() == 0:
+                # Restore last non-zero volume on unmute
+                self.volumeSlider.setValue(max(1, self._lastNonZeroVolume))
+        except Exception:
+            # Fallback: toggle based on slider if audioOutput lacks muted APIs
+            if self.volumeSlider.value() > 0:
+                self._lastNonZeroVolume = self.volumeSlider.value()
+                self.volumeSlider.setValue(0)
+            else:
+                self.volumeSlider.setValue(max(1, self._lastNonZeroVolume))
+        self._update_mute_icon()
+
+    def _update_mute_icon(self) -> None:
+        muted = False
+        try:
+            muted = bool(self.audioOutput.isMuted())
+        except Exception:
+            muted = self.volumeSlider.value() == 0
+        self.muteButton.setIcon(self.iconVolumeMuted if muted else self.iconVolume)
 
     def delete_selected_files(self) -> None:
         rows = sorted({self.playlist.row(i) for i in self.playlist.selectedItems()}, reverse=True)
