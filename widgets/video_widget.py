@@ -1,0 +1,149 @@
+from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia, QtMultimediaWidgets
+from typing import Optional
+from widgets.drop_proxy_overlay import DropProxyOverlay
+from widgets.slider_widget import SeekSlider
+
+
+class DroppableVideoWidget(QtMultimediaWidgets.QVideoWidget):
+    filesDropped = QtCore.pyqtSignal(list)
+
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+
+        # Drag-and-drop proxy overlay to reliably catch drops even if the
+        # underlying QVideoWidget is a native window that ignores DnD.
+        self._dropProxy = DropProxyOverlay(self)
+        self._dropProxy.filesDropped.connect(self.filesDropped)
+        self._dropProxy.raise_()
+
+        # Fullscreen overlay controls (shown on hover)
+        self._player: Optional[QtMultimedia.QMediaPlayer] = None
+        self._overlay = QtWidgets.QWidget(self)
+        self._overlay.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._overlay.setStyleSheet(
+            """
+            background-color: rgba(0, 0, 0, 130);
+            color: white;
+            """
+        )
+        self._overlay.hide()
+
+        self._overlayLayout = QtWidgets.QHBoxLayout(self._overlay)
+        self._overlayLayout.setContentsMargins(10, 6, 10, 6)
+        self._overlayLayout.setSpacing(8)
+
+        self._fsLabelCurrent = QtWidgets.QLabel("00:00", self._overlay)
+        self._fsSlider = SeekSlider(QtCore.Qt.Orientation.Horizontal)
+        self._fsSlider.setRange(0, 0)
+        self._fsSlider.setSingleStep(1000)
+        self._fsLabelDuration = QtWidgets.QLabel("00:00", self._overlay)
+        # Light slider styling for dark overlay
+        self._fsSlider.setStyleSheet(
+            """
+            QSlider::groove:horizontal { height: 4px; background: rgba(255,255,255,0.25); border-radius: 2px; }
+            QSlider::handle:horizontal { width: 12px; height: 12px; margin: -5px 0; border-radius: 6px; background: #2F80ED; }
+            QSlider::sub-page:horizontal { background: rgba(47,128,237,0.9); border-radius: 2px; }
+            """
+        )
+
+        self._overlayLayout.addWidget(self._fsLabelCurrent)
+        self._overlayLayout.addWidget(self._fsSlider, 1)
+        self._overlayLayout.addWidget(self._fsLabelDuration)
+
+        self._hideTimer = QtCore.QTimer(self)
+        self._hideTimer.setSingleShot(True)
+        self._hideTimer.timeout.connect(self._overlay.hide)
+
+        # Seek interactions
+        self._fsSlider.clickedTo.connect(self._on_fs_slider_clicked)
+        self._fsSlider.sliderMoved.connect(self._on_fs_slider_moved)
+
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            # Toggle fullscreen on the video widget itself
+            if hasattr(self, "setFullScreen"):
+                self.setFullScreen(not self.isFullScreen())
+            else:
+                # Fallback for environments without setFullScreen
+                if self.isFullScreen():
+                    self.showNormal()
+                else:
+                    self.showFullScreen()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Escape and self.isFullScreen():
+            # Exit fullscreen on ESC
+            if hasattr(self, "setFullScreen"):
+                self.setFullScreen(False)
+            else:
+                self.showNormal()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        # Show overlay while moving in fullscreen
+        if self.isFullScreen():
+            self._showOverlayTemporarily()
+        super().mouseMoveEvent(event)
+
+    def enterEvent(self, event: QtCore.QEvent) -> None:
+        if self.isFullScreen():
+            self._showOverlayTemporarily()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        # Hide sooner when leaving
+        if self.isFullScreen():
+            self._hideTimer.start(500)
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        # Position overlay at bottom inside the video area
+        h = 44
+        margin = 10
+        self._overlay.setGeometry(margin, self.height() - h - margin, self.width() - 2 * margin, h)
+        # Ensure the DnD proxy always covers the video area
+        self._dropProxy.setGeometry(0, 0, self.width(), self.height())
+        self._dropProxy.raise_()
+
+    def attachMediaPlayer(self, player: QtMultimedia.QMediaPlayer) -> None:
+        # Connect to media player for syncing timeline in fullscreen overlay
+        self._player = player
+        player.positionChanged.connect(self._on_player_position_changed)
+        player.durationChanged.connect(self._on_player_duration_changed)
+
+    def _on_player_duration_changed(self, duration_ms: int) -> None:
+        self._fsSlider.setRange(0, int(duration_ms))
+        self._fsLabelDuration.setText(self._format_msec(duration_ms))
+
+    def _on_player_position_changed(self, position_ms: int) -> None:
+        self._fsSlider.setValue(int(position_ms))
+        self._fsLabelCurrent.setText(self._format_msec(position_ms))
+
+    def _on_fs_slider_clicked(self, value: int) -> None:
+        if self._player is not None:
+            self._player.setPosition(int(value))
+
+    def _on_fs_slider_moved(self, value: int) -> None:
+        self._fsLabelCurrent.setText(self._format_msec(int(value)))
+
+    def _showOverlayTemporarily(self) -> None:
+        self._overlay.show()
+        self._hideTimer.start(1500)
+
+    def _format_msec(self, msec: int) -> str:
+        total_seconds = max(0, int(msec // 1000))
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
