@@ -291,6 +291,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mediaPlayer.setSource(url)
         self.mediaPlayer.play()
         self.playlist.setCurrentRow(row)
+        self._highlight_current_in_playlist()
 
     def play_next(self) -> None:
         row = self.current_row()
@@ -500,6 +501,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # No playable video among dropped paths
             self.statusBar().showMessage("No playable video in drop", 3000)
+        # Update highlight even if the dropped file isn't in playlist
+        self._highlight_current_in_playlist()
 
     # ------------------- Media callbacks -------------------
     def on_media_status_changed(self, status: QtMultimedia.QMediaPlayer.MediaStatus) -> None:
@@ -517,3 +520,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self.playButton.setIcon(self.iconPause)
         else:
             self.playButton.setIcon(self.iconPlay)
+
+    # ------------------- Now Playing Highlight -------------------
+    def _highlight_current_in_playlist(self) -> None:
+        try:
+            current_path = self.mediaPlayer.source().toLocalFile()
+        except Exception:
+            current_path = ""
+        for i in range(self.playlist.count()):
+            item = self.playlist.item(i)
+            is_current = item.data(QtCore.Qt.ItemDataRole.UserRole) == current_path
+            # Background color: light yellow for current, white otherwise
+            bg = QtGui.QColor("#FFF7CC") if is_current else QtGui.QColor("white")
+            item.setBackground(QtGui.QBrush(bg))
+            # Font weight: bold for current, normal otherwise
+            f = item.font()
+            f.setBold(bool(is_current))
+            item.setFont(f)
