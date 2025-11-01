@@ -4,6 +4,7 @@ from typing import Optional
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider, VolumeSlider
+from utils import is_video_file, natural_key
 from typing import List
 from pathlib import Path
 from utils import is_video_file, find_similar_files
@@ -231,10 +232,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_playlist_external_files(self, path_strs: List[str]) -> None:
         paths = [Path(p) for p in path_strs]
-        video_paths = [p for p in paths if is_video_file(p)]
-        if video_paths:
+        collected: List[Path] = []
+        for p in paths:
+            if p.is_dir():
+                try:
+                    for child in p.rglob('*'):
+                        if is_video_file(child):
+                            collected.append(child)
+                except Exception:
+                    pass
+            elif is_video_file(p):
+                collected.append(p)
+        if collected:
+            collected.sort(key=lambda pa: natural_key(pa.name))
             # Do not autoplay when files are dropped onto the playlist
-            self.add_files(video_paths, autoplay_if_stopped=False)
+            self.add_files(collected, autoplay_if_stopped=False)
 
     def _has_path_in_playlist(self, path: Path) -> bool:
         abs_str = str(path.resolve())
