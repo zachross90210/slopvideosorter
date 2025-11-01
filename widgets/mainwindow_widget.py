@@ -237,9 +237,15 @@ class MainWindow(QtWidgets.QMainWindow):
         paths = [Path(p) for p in path_strs]
         collected: List[Path] = []
         for p in paths:
+            # Skip anything inside a _saved folder
+            if any(part == "_saved" for part in p.parts):
+                continue
             if p.is_dir():
                 try:
                     for child in p.rglob('*'):
+                        # Skip files in any _saved subfolder
+                        if any(part == "_saved" for part in child.parts):
+                            continue
                         if is_video_file(child):
                             collected.append(child)
                 except Exception:

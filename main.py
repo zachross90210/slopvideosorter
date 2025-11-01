@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 from typing import List
+from PyQt6 import QtWidgets
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider
