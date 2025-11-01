@@ -77,3 +77,23 @@ class DropProxyOverlay(QtWidgets.QWidget):
             QtWidgets.QApplication.sendEvent(parent, event)
         else:
             super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        # Drive fullscreen overlay show/hide based on bottom-edge hover
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "isFullScreen") and parent.isFullScreen():
+            try:
+                y = event.position().y()
+            except Exception:
+                y = event.y()
+            threshold = parent.height() * 0.90
+            if y >= threshold:
+                # Call parent's overlay show helper if present
+                show_fn = getattr(parent, "_showOverlayTemporarily", None)
+                if callable(show_fn):
+                    show_fn()
+            else:
+                overlay = getattr(parent, "_overlay", None)
+                if overlay is not None:
+                    overlay.hide()
+        super().mouseMoveEvent(event)
