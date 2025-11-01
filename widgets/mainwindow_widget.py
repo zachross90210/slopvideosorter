@@ -201,10 +201,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_playlist_context_menu(self, pos: QtCore.QPoint) -> None:
         menu = QtWidgets.QMenu(self)
         addSimilar = menu.addAction("Add similar files in folder")
+        saveSelected = menu.addAction("Save this file")
         deleteSelected = menu.addAction("Delete selected (Shift+Del)")
         action = menu.exec(self.playlist.mapToGlobal(pos))
         if action == addSimilar:
             self.add_similar_for_selection()
+        elif action == saveSelected:
+            self.save_selected_files()
         elif action == deleteSelected:
             self.delete_selected_files()
 
@@ -426,6 +429,43 @@ class MainWindow(QtWidgets.QMainWindow):
             next_index = min(rows[-1], self.playlist.count() - 1)
             if next_index >= 0:
                 self.play_item_at(next_index)
+
+    def save_selected_files(self) -> None:
+        items = self.playlist.selectedItems()
+        if not items:
+            return
+        current_file = self.mediaPlayer.source().toLocalFile()
+        moved_current = False
+        # Work on a copy to avoid selection issues during removal
+        rows = sorted({self.playlist.row(i) for i in items}, reverse=True)
+        for row in rows:
+            item = self.playlist.item(row)
+            file_path = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if not file_path:
+                continue
+            src = Path(file_path)
+            if not src.exists() or not src.is_file():
+                continue
+            dest_dir = src.parent / "_saved"
+            try:
+                dest_dir.mkdir(exist_ok=True)
+                dest = dest_dir / src.name
+                # If destination exists, skip to avoid overwrite
+                if dest.exists():
+                    self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
+                    continue
+                import shutil
+                shutil.move(str(src), str(dest))
+                # Remove from playlist UI
+                self.playlist.takeItem(row)
+                if file_path == current_file:
+                    moved_current = True
+            except Exception as exc:
+                self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
+
+        if moved_current:
+            # Stop playback if the current file was moved
+            self.mediaPlayer.stop()
 
     def add_similar_for_selection(self) -> None:
         items = self.playlist.selectedItems()
