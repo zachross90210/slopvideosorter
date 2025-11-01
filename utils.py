@@ -14,6 +14,8 @@ VIDEO_EXTENSIONS = {
     ".m4v",
     ".flv",
     ".wmv",
+    ".m2ts",
+    ".mts",
 }
 
 def is_video_file(path: Path) -> bool:
