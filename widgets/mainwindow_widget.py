@@ -445,6 +445,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         current_file = self.mediaPlayer.source().toLocalFile()
+        current_row_before = -1
+        # Find the current row before deletion
+        if current_file:
+            for i in range(self.playlist.count()):
+                item = self.playlist.item(i)
+                if item.data(QtCore.Qt.ItemDataRole.UserRole) == current_file:
+                    current_row_before = i
+                    break
+
         removed_current = False
 
         for row in rows:
@@ -462,12 +471,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if file_path == current_file:
                 removed_current = True
 
-        if removed_current:
+        if removed_current and current_row_before >= 0:
             self.mediaPlayer.stop()
-            # Play next available item at the same index if possible
-            next_index = min(rows[-1], self.playlist.count() - 1)
-            if next_index >= 0:
-                self.play_item_at(next_index)
+            # After removing current_row_before, the next item (which was at current_row_before + 1)
+            # is now at current_row_before. Play at that index.
+            if current_row_before < self.playlist.count():
+                self.play_item_at(current_row_before)
+            elif self.playlist.count() > 0:
+                # If current_row_before was the last item, play the new last item
+                self.play_item_at(self.playlist.count() - 1)
 
         # Ensure playlist still accepts drops even when empty
         self.playlist.setAcceptDrops(True)
@@ -598,15 +610,38 @@ class MainWindow(QtWidgets.QMainWindow):
             if dest.exists():
                 self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
                 # Still play next even if file exists
-                self.play_next()
+                # Remove from playlist if found and play next
+                if current_row >= 0:
+                    self.playlist.takeItem(current_row)
+                    # Play the item that is now at current_row (which was the next one)
+                    if current_row < self.playlist.count():
+                        self.play_item_at(current_row)
+                    elif self.playlist.count() > 0:
+                        # If current_row was the last item, play the new last item
+                        self.play_item_at(self.playlist.count() - 1)
+                    else:
+                        # Playlist is empty, stop playback
+                        self.mediaPlayer.stop()
+                else:
+                    self.play_next()
                 return
             import shutil
             shutil.move(str(src), str(dest))
             # Remove from playlist if found
             if current_row >= 0:
                 self.playlist.takeItem(current_row)
-            # Play next automatically
-            self.play_next()
+                # Play the item that is now at current_row (which was the next one)
+                if current_row < self.playlist.count():
+                    self.play_item_at(current_row)
+                elif self.playlist.count() > 0:
+                    # If current_row was the last item, play the new last item
+                    self.play_item_at(self.playlist.count() - 1)
+                else:
+                    # Playlist is empty, stop playback
+                    self.mediaPlayer.stop()
+            else:
+                # File wasn't in playlist, just stop
+                self.mediaPlayer.stop()
         except Exception as exc:
             self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
