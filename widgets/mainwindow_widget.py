@@ -4,10 +4,9 @@ from typing import Optional
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider, VolumeSlider
-from utils import is_video_file, natural_key
+from utils import is_video_file, natural_key, find_similar_files, get_saved_directory
 from typing import List
 from pathlib import Path
-from utils import is_video_file, find_similar_files
 
 
 
@@ -78,6 +77,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.playButton.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         self.prevButton.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         self.nextButton.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+
+        # Save button (green, next to Next button)
+        self.saveButton = QtWidgets.QPushButton("✓")
+        self.saveButton.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self.saveButton.setFixedSize(base_btn, base_btn)
+        self.saveButton.setIconSize(QtCore.QSize(18, 18))
+        self.saveButton.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                border: none;
+                border-radius: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #229954; }
+            QPushButton:pressed { background-color: #1E8449; }
+            """
+        )
+        self.saveButton.clicked.connect(self.save_current_and_play_next)
+
         minimalStyle = (
             """
             QPushButton {
@@ -153,6 +173,8 @@ class MainWindow(QtWidgets.QMainWindow):
         mediaControlsBottom.addWidget(self.playButton)
         mediaControlsBottom.addSpacing(6)
         mediaControlsBottom.addWidget(self.nextButton)
+        mediaControlsBottom.addSpacing(6)
+        mediaControlsBottom.addWidget(self.saveButton)
         mediaControlsBottom.addSpacing(12)
         mediaControlsBottom.addWidget(self.muteButton)
         mediaControlsBottom.addSpacing(6)
@@ -211,7 +233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif action == deleteSelected:
             self.delete_selected_files()
 
-    def add_files(self, files: List[Path], autoplay_if_stopped: bool = True) -> None:
+    def add_files(self, files: List[Path], autoplay_if_stopped: bool = True, source_dir: Optional[Path] = None) -> None:
         added_any = False
         for path in files:
             if not is_video_file(path):
@@ -221,6 +243,9 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(path.name)
             # Store absolute path in UserRole
             item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path.resolve()))
+            # Store source directory in UserRole + 1 (if provided) for save-to-parent logic
+            if source_dir:
+                item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, str(source_dir.resolve()))
             # Ensure default white background for unselected state
             item.setBackground(QtGui.QBrush(QtGui.QColor("white")))
             self.playlist.addItem(item)
@@ -236,6 +261,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_playlist_external_files(self, path_strs: List[str]) -> None:
         paths = [Path(p) for p in path_strs]
         collected: List[Path] = []
+        source_dir: Optional[Path] = None
+        # Check if a directory was dropped; use the first directory found
+        for p in paths:
+            if p.is_dir() and not any(part == "_saved" for part in p.parts):
+                source_dir = p
+                break
         for p in paths:
             # Skip anything inside a _saved folder
             if any(part == "_saved" for part in p.parts):
@@ -255,7 +286,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if collected:
             collected.sort(key=lambda pa: natural_key(pa.name))
             # Do not autoplay when files are dropped onto the playlist
-            self.add_files(collected, autoplay_if_stopped=False)
+            # Pass source_dir so save can create _saved in its parent
+            self.add_files(collected, autoplay_if_stopped=False, source_dir=source_dir)
 
     def _has_path_in_playlist(self, path: Path) -> bool:
         abs_str = str(path.resolve())
@@ -437,12 +469,58 @@ class MainWindow(QtWidgets.QMainWindow):
             if next_index >= 0:
                 self.play_item_at(next_index)
 
+        # Ensure playlist still accepts drops even when empty
+        self.playlist.setAcceptDrops(True)
+
     def save_selected_files(self) -> None:
         items = self.playlist.selectedItems()
         if not items:
             return
         current_file = self.mediaPlayer.source().toLocalFile()
         moved_current = False
+        # Collect all file paths and check source directories
+        file_paths = []
+        source_dirs = []
+        for item in items:
+            file_path = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if file_path:
+                file_paths.append(Path(file_path))
+            source_dir = item.data(QtCore.Qt.ItemDataRole.UserRole + 1)
+            if source_dir:
+                source_dirs.append(Path(source_dir))
+        if not file_paths:
+            return
+        # First, try to get saved directory from config
+        save_target_dir = get_saved_directory()
+
+        # If no config, fall back to source directory logic
+        if not save_target_dir:
+            # If all selected items share the same source directory (from a folder drop), use its parent for _saved
+            use_source_parent = len(set(source_dirs)) == 1 and len(source_dirs) == len(items) and source_dirs
+            save_target_dir = source_dirs[0].parent if use_source_parent else None
+
+            # If no source directory match, find the common ancestor directory of all files
+            if not save_target_dir and file_paths:
+                # Find common parent by comparing path parts
+                file_parents = [p.parent for p in file_paths if p.exists()]
+                if file_parents:
+                    # Start with the first parent's parts
+                    common_parts = list(file_parents[0].parts)
+                    # Compare with each other parent and trim to common prefix
+                    for parent in file_parents[1:]:
+                        parent_parts = list(parent.parts)
+                        # Find how many parts match from the start
+                        common_len = 0
+                        for i in range(min(len(common_parts), len(parent_parts))):
+                            if common_parts[i] == parent_parts[i]:
+                                common_len += 1
+                            else:
+                                break
+                        common_parts = common_parts[:common_len]
+                    # Reconstruct the common parent path
+                    if common_parts:
+                        save_target_dir = Path(*common_parts)
+
         # Work on a copy to avoid selection issues during removal
         rows = sorted({self.playlist.row(i) for i in items}, reverse=True)
         for row in rows:
@@ -453,7 +531,11 @@ class MainWindow(QtWidgets.QMainWindow):
             src = Path(file_path)
             if not src.exists() or not src.is_file():
                 continue
-            dest_dir = src.parent / "_saved"
+            # Use config directory if set; otherwise use computed directory; fall back to each file's parent
+            if save_target_dir:
+                dest_dir = save_target_dir
+            else:
+                dest_dir = src.parent / "_saved"
             try:
                 dest_dir.mkdir(exist_ok=True)
                 dest = dest_dir / src.name
@@ -473,6 +555,60 @@ class MainWindow(QtWidgets.QMainWindow):
         if moved_current:
             # Stop playback if the current file was moved
             self.mediaPlayer.stop()
+
+    def save_current_and_play_next(self) -> None:
+        """Save the currently playing file and automatically play next."""
+        try:
+            current_path = self.mediaPlayer.source().toLocalFile()
+        except Exception:
+            current_path = ""
+        if not current_path:
+            return
+        src = Path(current_path)
+        if not src.exists() or not src.is_file():
+            return
+
+        # Find the item in playlist
+        current_row = -1
+        item = None
+        for i in range(self.playlist.count()):
+            it = self.playlist.item(i)
+            if it.data(QtCore.Qt.ItemDataRole.UserRole) == current_path:
+                current_row = i
+                item = it
+                break
+
+        # Get saved directory from config or fallback logic
+        save_target_dir = get_saved_directory()
+        if not save_target_dir:
+            # Try source directory logic
+            source_dir = item.data(QtCore.Qt.ItemDataRole.UserRole + 1) if item else None
+            if source_dir:
+                save_target_dir = Path(source_dir).parent / "_saved"
+            else:
+                # Fall back to file's parent / _saved
+                save_target_dir = src.parent / "_saved"
+
+        # Use save_target_dir directly (it already includes _saved if needed, or is from config)
+        dest_dir = save_target_dir
+
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+            if dest.exists():
+                self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
+                # Still play next even if file exists
+                self.play_next()
+                return
+            import shutil
+            shutil.move(str(src), str(dest))
+            # Remove from playlist if found
+            if current_row >= 0:
+                self.playlist.takeItem(current_row)
+            # Play next automatically
+            self.play_next()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
     def add_similar_for_selection(self) -> None:
         items = self.playlist.selectedItems()

@@ -58,9 +58,13 @@ class PlaylistWidget(QtWidgets.QListWidget):
         super().startDrag(supportedActions)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
+        # Ensure drops are accepted even when playlist is empty
         md = event.mimeData()
         if md.hasUrls():
             event.acceptProposedAction()
+            # Explicitly ensure accept drops is still enabled (might be reset when playlist becomes empty)
+            if not self.acceptDrops():
+                self.setAcceptDrops(True)
             return
         super().dragEnterEvent(event)
 

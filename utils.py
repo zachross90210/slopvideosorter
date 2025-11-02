@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import re
+import os
 
 
 VIDEO_EXTENSIONS = {
@@ -69,3 +70,21 @@ def find_similar_files(reference_path: Path) -> List[Path]:
 
     candidates.sort(key=lambda p: natural_key(p.name))
     return candidates
+
+
+def get_saved_directory() -> Optional[Path]:
+    """Read the saved directory path from ~/.config/videoplayer/config."""
+    config_path = Path.home() / ".config" / "videoplayer" / "config"
+    try:
+        if config_path.exists() and config_path.is_file():
+            with open(config_path, "r", encoding="utf-8") as f:
+                line = f.read().strip()
+                if line:
+                    p = Path(os.path.expanduser(line))
+                    if p.is_absolute():
+                        return p
+                    # If relative, expand from home directory
+                    return Path.home() / p
+    except Exception:
+        pass
+    return None
