@@ -1,4 +1,5 @@
 import os
+import shutil
 from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia
 from typing import Optional
 from widgets.playlist_widget import PlaylistWidget
@@ -7,7 +8,7 @@ from widgets.slider_widget import SeekSlider, VolumeSlider
 from utils import is_video_file, natural_key, find_similar_files, get_saved_directory
 from typing import List
 from pathlib import Path
-
+from utils import get_saved_directory
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -143,6 +144,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.positionSlider.setSingleStep(1000)  # 1s steps when using arrow keys
         self.labelDuration = QtWidgets.QLabel("00:00")
         self.labelPlaylistCount = QtWidgets.QLabel("0/0")
+        self.labelSavePath = QtWidgets.QLabel("")
+        self.labelSavePath.setWordWrap(True)
+        self.labelSavePath.setStyleSheet("color: gray; font-size: 9pt; padding: 4px;")
         self._isSeeking = False
 
         # Layout
@@ -185,6 +189,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         mainLayout.addLayout(contentLayout, stretch=1)
         mainLayout.addLayout(timelineLayout)
+        mainLayout.addWidget(self.labelSavePath)
         mainLayout.addLayout(mediaControlsBottom)
 
         # Shortcuts
@@ -209,6 +214,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.audioOutput.mutedChanged.connect(self._update_mute_icon)  # type: ignore[attr-defined]
         except Exception:
             pass
+        
+        # Initial update of save path display
+        self._update_save_path()
 
     # ------------------- UI/Actions -------------------
     def open_files(self) -> None:
@@ -495,48 +503,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         current_file = self.mediaPlayer.source().toLocalFile()
         moved_current = False
-        # Collect all file paths and check source directories
-        file_paths = []
-        source_dirs = []
-        for item in items:
-            file_path = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            if file_path:
-                file_paths.append(Path(file_path))
-            source_dir = item.data(QtCore.Qt.ItemDataRole.UserRole + 1)
-            if source_dir:
-                source_dirs.append(Path(source_dir))
-        if not file_paths:
-            return
-        # First, try to get saved directory from config
-        save_target_dir = get_saved_directory()
-
-        # If no config, fall back to source directory logic
-        if not save_target_dir:
-            # If all selected items share the same source directory (from a folder drop), use its parent for _saved
-            use_source_parent = len(set(source_dirs)) == 1 and len(source_dirs) == len(items) and source_dirs
-            save_target_dir = source_dirs[0].parent if use_source_parent else None
-
-            # If no source directory match, find the common ancestor directory of all files
-            if not save_target_dir and file_paths:
-                # Find common parent by comparing path parts
-                file_parents = [p.parent for p in file_paths if p.exists()]
-                if file_parents:
-                    # Start with the first parent's parts
-                    common_parts = list(file_parents[0].parts)
-                    # Compare with each other parent and trim to common prefix
-                    for parent in file_parents[1:]:
-                        parent_parts = list(parent.parts)
-                        # Find how many parts match from the start
-                        common_len = 0
-                        for i in range(min(len(common_parts), len(parent_parts))):
-                            if common_parts[i] == parent_parts[i]:
-                                common_len += 1
-                            else:
-                                break
-                        common_parts = common_parts[:common_len]
-                    # Reconstruct the common parent path
-                    if common_parts:
-                        save_target_dir = Path(*common_parts)
+        
+        # Get saved directory (always returns a path now)
+        dest_dir = get_saved_directory()
 
         # Work on a copy to avoid selection issues during removal
         rows = sorted({self.playlist.row(i) for i in items}, reverse=True)
@@ -548,19 +517,15 @@ class MainWindow(QtWidgets.QMainWindow):
             src = Path(file_path)
             if not src.exists() or not src.is_file():
                 continue
-            # Use config directory if set; otherwise use computed directory; fall back to each file's parent
-            if save_target_dir:
-                dest_dir = save_target_dir
-            else:
-                dest_dir = src.parent / "_saved"
+            
             try:
-                dest_dir.mkdir(exist_ok=True)
+                dest_dir.mkdir(parents=True, exist_ok=True)
                 dest = dest_dir / src.name
                 # If destination exists, skip to avoid overwrite
                 if dest.exists():
                     self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
                     continue
-                import shutil
+
                 shutil.move(str(src), str(dest))
                 # Remove from playlist UI
                 self.playlist.takeItem(row)
@@ -588,27 +553,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Find the item in playlist
         current_row = -1
-        item = None
         for i in range(self.playlist.count()):
             it = self.playlist.item(i)
             if it.data(QtCore.Qt.ItemDataRole.UserRole) == current_path:
                 current_row = i
-                item = it
                 break
 
-        # Get saved directory from config or fallback logic
-        save_target_dir = get_saved_directory()
-        if not save_target_dir:
-            # Try source directory logic
-            source_dir = item.data(QtCore.Qt.ItemDataRole.UserRole + 1) if item else None
-            if source_dir:
-                save_target_dir = Path(source_dir).parent / "_saved"
-            else:
-                # Fall back to file's parent / _saved
-                save_target_dir = src.parent / "_saved"
-
-        # Use save_target_dir directly (it already includes _saved if needed, or is from config)
-        dest_dir = save_target_dir
+        # Get saved directory (always returns a path now)
+        dest_dir = get_saved_directory()
 
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -631,7 +583,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     self.play_next()
                 return
-            import shutil
+
             shutil.move(str(src), str(dest))
             # Remove from playlist if found
             if current_row >= 0:
@@ -722,3 +674,14 @@ class MainWindow(QtWidgets.QMainWindow):
         current_row = self.current_row()
         current_num = current_row + 1 if current_row >= 0 else 0
         self.labelPlaylistCount.setText(f"{current_num}/{total}")
+        self._update_save_path()
+
+    def _update_save_path(self) -> None:
+        """Update the save path label based on the saved directory."""
+        
+        if self.playlist.count() == 0:
+            self.labelSavePath.setText("")
+            return
+        
+        save_target_dir = get_saved_directory()
+        self.labelSavePath.setText(f"Save to: {save_target_dir}")

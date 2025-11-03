@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 import re
 import os
 
@@ -72,9 +72,11 @@ def find_similar_files(reference_path: Path) -> List[Path]:
     return candidates
 
 
-def get_saved_directory() -> Optional[Path]:
-    """Read the saved directory path from ~/.config/videoplayer/config."""
+def get_saved_directory() -> Path:
+    """Get the saved directory path from ~/.config/videoplayer/config, creating it with default if missing."""
     config_path = Path.home() / ".config" / "videoplayer" / "config"
+    default_path = Path.home() / "Videos" / "_saved"
+    
     try:
         if config_path.exists() and config_path.is_file():
             with open(config_path, "r", encoding="utf-8") as f:
@@ -85,6 +87,12 @@ def get_saved_directory() -> Optional[Path]:
                         return p
                     # If relative, expand from home directory
                     return Path.home() / p
+        
+        # Config doesn't exist, create it with default path
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(str(default_path))
+        return default_path
     except Exception:
-        pass
-    return None
+        # Fallback to default on any error
+        return default_path
