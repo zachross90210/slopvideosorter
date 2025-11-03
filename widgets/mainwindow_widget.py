@@ -142,6 +142,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.positionSlider.setRange(0, 0)
         self.positionSlider.setSingleStep(1000)  # 1s steps when using arrow keys
         self.labelDuration = QtWidgets.QLabel("00:00")
+        self.labelPlaylistCount = QtWidgets.QLabel("0/0")
         self._isSeeking = False
 
         # Layout
@@ -161,6 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         timelineLayout.addWidget(self.labelCurrentTime)
         timelineLayout.addWidget(self.positionSlider, stretch=1)
         timelineLayout.addWidget(self.labelDuration)
+        timelineLayout.addWidget(self.labelPlaylistCount)
 
         contentLayout.addWidget(leftPanel, stretch=3)
         contentLayout.addWidget(self.playlist, stretch=1)
@@ -257,6 +259,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             # Auto-select first item
             self.play_item_at(0)
+        if added_any:
+            self._update_playlist_count()
 
     def on_playlist_external_files(self, path_strs: List[str]) -> None:
         paths = [Path(p) for p in path_strs]
@@ -483,6 +487,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Ensure playlist still accepts drops even when empty
         self.playlist.setAcceptDrops(True)
+        self._update_playlist_count()
 
     def save_selected_files(self) -> None:
         items = self.playlist.selectedItems()
@@ -567,6 +572,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if moved_current:
             # Stop playback if the current file was moved
             self.mediaPlayer.stop()
+        self._update_playlist_count()
 
     def save_current_and_play_next(self) -> None:
         """Save the currently playing file and automatically play next."""
@@ -642,6 +648,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 # File wasn't in playlist, just stop
                 self.mediaPlayer.stop()
+            self._update_playlist_count()
         except Exception as exc:
             self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
@@ -708,3 +715,10 @@ class MainWindow(QtWidgets.QMainWindow):
             f = item.font()
             f.setBold(bool(is_current))
             item.setFont(f)
+        self._update_playlist_count()
+
+    def _update_playlist_count(self) -> None:
+        total = self.playlist.count()
+        current_row = self.current_row()
+        current_num = current_row + 1 if current_row >= 0 else 0
+        self.labelPlaylistCount.setText(f"{current_num}/{total}")
