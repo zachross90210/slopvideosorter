@@ -1,3 +1,21 @@
+"""
+Slop Video Sorter: Utility functions for the video player application.
+
+Copyright (C) 2025 zachross90210 <zachross90210@gmail.com>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 from pathlib import Path
 from typing import List
 import re
@@ -77,8 +95,8 @@ def find_similar_files(reference_path: Path) -> List[Path]:
 
 
 def get_saved_directory() -> Path:
-    """Get the saved directory path from ~/.config/videoplayer/config, creating it with default if missing."""
-    config_path = Path.home() / ".config" / "videoplayer" / "config"
+    """Get the saved directory path from ~/.config/slopvideosorter/config, creating it with default if missing."""
+    config_path = Path.home() / ".config" / "slopvideosorter" / "config"
     default_path = Path.home() / "Videos" / "_saved"
     
     try:

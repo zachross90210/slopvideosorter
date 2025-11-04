@@ -1,3 +1,21 @@
+"""
+Slop Video Sorter
+
+Copyright (C) 2025 zachross90210 <zachross90210@gmail.com>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 import argparse
 import sys
 from PyQt6 import QtWidgets
@@ -8,7 +26,7 @@ from logger import setup_logger
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="PyQt6 Video Player with Playlist",
+        description="Slop Video Sorter",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

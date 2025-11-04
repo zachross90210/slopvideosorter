@@ -1,4 +1,21 @@
-"""Logging configuration for the video player application."""
+"""
+Slop Video Sorter: Logging configuration for the video player application.
+
+Copyright (C) 2025 zachross90210 <zachross90210@gmail.com>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 import logging
 import sys
 from pathlib import Path
@@ -14,7 +31,7 @@ def setup_logger(verbosity: int = 0) -> logging.Logger:
     Returns:
         Configured logger instance
     """
-    logger = logging.getLogger("videoplayer")
+    logger = logging.getLogger("slopvideosorter")
     
     # Don't add handlers if they already exist (avoid duplicates)
     if logger.handlers:
@@ -48,7 +65,7 @@ def setup_logger(verbosity: int = 0) -> logging.Logger:
     return logger
 
 
-def get_logger(name: str = "videoplayer") -> logging.Logger:
+def get_logger(name: str = "slopvideosorter") -> logging.Logger:
     """
     Get a logger instance for a module.
     
