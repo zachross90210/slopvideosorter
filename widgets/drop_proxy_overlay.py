@@ -1,5 +1,8 @@
 from PyQt6 import QtCore, QtGui, QtWidgets
 from typing import Optional
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DropProxyOverlay(QtWidgets.QWidget):
@@ -14,22 +17,22 @@ class DropProxyOverlay(QtWidgets.QWidget):
         self.setMouseTracking(True)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
-        print(f"[DND] target_widget: {type(self).__name__}")
+        logger.debug(f"[DND] target_widget: {type(self).__name__}")
         if event.mimeData().hasUrls() or event.mimeData().hasText():
-            print("[DND] Proxy.dragEnterEvent: accept")
+            logger.debug("[DND] Proxy.dragEnterEvent: accept")
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
-        print(f"[DND] target_widget: {type(self).__name__}")
+        logger.debug(f"[DND] target_widget: {type(self).__name__}")
         if event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:
-        print(f"[DND] target_widget: {type(self).__name__}")
+        logger.debug(f"[DND] target_widget: {type(self).__name__}")
         md = event.mimeData()
         paths = []
         if md.hasUrls():
@@ -50,7 +53,7 @@ class DropProxyOverlay(QtWidgets.QWidget):
                 if local:
                     paths.append(local)
         if paths:
-            print(f"[DND] Proxy.dropEvent: filesDropped -> {len(paths)} files")
+            logger.debug(f"[DND] Proxy.dropEvent: filesDropped -> {len(paths)} files")
             self.filesDropped.emit(paths)
             event.acceptProposedAction()
             return

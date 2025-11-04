@@ -2,6 +2,9 @@ from pathlib import Path
 from typing import List
 import re
 import os
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 VIDEO_EXTENSIONS = {
@@ -65,7 +68,8 @@ def find_similar_files(reference_path: Path) -> List[Path]:
             child_stem = child.stem
             if child_stem.startswith(prefix):
                 candidates.append(child)
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"Error finding similar files in {directory}: {exc}")
         return []
 
     candidates.sort(key=lambda p: natural_key(p.name))
@@ -89,10 +93,12 @@ def get_saved_directory() -> Path:
                     return Path.home() / p
         
         # Config doesn't exist, create it with default path
+        logger.info(f"Creating config file with default save directory: {default_path}")
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(str(default_path))
         return default_path
-    except Exception:
+    except Exception as exc:
         # Fallback to default on any error
+        logger.warning(f"Error reading/creating config file, using default: {default_path}", exc_info=True)
         return default_path

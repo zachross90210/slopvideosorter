@@ -2,6 +2,9 @@ from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia, QtMultimediaWidgets
 from typing import Optional
 from widgets.drop_proxy_overlay import DropProxyOverlay
 from widgets.slider_widget import SeekSlider
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DroppableVideoWidget(QtMultimediaWidgets.QVideoWidget):
@@ -154,7 +157,7 @@ class DroppableVideoWidget(QtMultimediaWidgets.QVideoWidget):
         self._fsLabelCurrent.setText(self._format_msec(int(value)))
 
     def _showOverlayTemporarily(self) -> None:
-        print(f"[FULLSCREEN] _showOverlayTemporarily")
+        logger.debug("[FULLSCREEN] _showOverlayTemporarily")
         self._updateOverlayGeometry()
         self._overlay.show()
         self._hideTimer.start(1500)

@@ -1,14 +1,15 @@
 import os
 import shutil
 from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia
-from typing import Optional
+from typing import Optional, List
+from pathlib import Path
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider, VolumeSlider
 from utils import is_video_file, natural_key, find_similar_files, get_saved_directory
-from typing import List
-from pathlib import Path
-from utils import get_saved_directory
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -479,6 +480,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     os.remove(file_path)
             except Exception as exc:
                 # Show a non-blocking error message in status bar
+                logger.error(f"Failed to delete file: {file_path}", exc_info=True)
                 self.statusBar().showMessage(f"Failed to delete: {file_path} ({exc})", 5000)
             if file_path == current_file:
                 removed_current = True
@@ -523,6 +525,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 dest = dest_dir / src.name
                 # If destination exists, skip to avoid overwrite
                 if dest.exists():
+                    logger.info(f"Skipping save (file exists): {dest}")
                     self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
                     continue
 
@@ -532,6 +535,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if file_path == current_file:
                     moved_current = True
             except Exception as exc:
+                logger.error(f"Failed to save file: {src}", exc_info=True)
                 self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
         if moved_current:
@@ -566,6 +570,7 @@ class MainWindow(QtWidgets.QMainWindow):
             dest_dir.mkdir(parents=True, exist_ok=True)
             dest = dest_dir / src.name
             if dest.exists():
+                logger.info(f"Skipping save (file exists): {dest}")
                 self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
                 # Still play next even if file exists
                 # Remove from playlist if found and play next
@@ -602,6 +607,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.mediaPlayer.stop()
             self._update_playlist_count()
         except Exception as exc:
+            logger.error(f"Failed to save file: {src}", exc_info=True)
             self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
     def add_similar_for_selection(self) -> None:
@@ -630,6 +636,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 break
         else:
             # No playable video among dropped paths
+            logger.warning("No playable video files found in dropped paths")
             self.statusBar().showMessage("No playable video in drop", 3000)
         # Update highlight even if the dropped file isn't in playlist
         self._highlight_current_in_playlist()
@@ -642,6 +649,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Skip unplayable files automatically without attempting any transcoding
             current = self.mediaPlayer.source().toLocalFile()
             if current:
+                logger.warning(f"Cannot play invalid media file: {current}")
                 self.statusBar().showMessage(f"Cannot play: {os.path.basename(current)} — skipping", 4000)
             self.play_next()
 
