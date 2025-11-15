@@ -36,6 +36,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("Slop Video Sorter")
         self.resize(1200, 700)
         self.setAcceptDrops(True)
+        
+        # Set window icon
+        icon_path = Path(__file__).parent.parent / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
 
         # Media player setup
         self.mediaPlayer = QtMultimedia.QMediaPlayer(self)

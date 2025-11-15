@@ -18,7 +18,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 import argparse
 import sys
-from PyQt6 import QtWidgets
+from pathlib import Path
+from PyQt6 import QtWidgets, QtGui
 from widgets.mainwindow_widget import MainWindow
 from logger import setup_logger
 
@@ -45,6 +46,12 @@ def main() -> None:
     setup_logger(verbosity=args.verbose)
     
     app = QtWidgets.QApplication(sys.argv)
+    
+    # Set application icon
+    icon_path = Path(__file__).parent / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QtGui.QIcon(str(icon_path)))
+    
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
