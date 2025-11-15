@@ -48,7 +48,7 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     
     # Set application icon
-    icon_path = Path(__file__).parent / "icon.png"
+    icon_path = Path(__file__).parent / "icons/icon_128.png"
     if icon_path.exists():
         app.setWindowIcon(QtGui.QIcon(str(icon_path)))
     
