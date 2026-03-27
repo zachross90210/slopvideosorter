@@ -17,14 +17,13 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 import os
-import shutil
 from PyQt6 import QtCore, QtGui, QtWidgets, QtMultimedia
 from typing import Optional, List
 from pathlib import Path
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider, VolumeSlider
-from utils import is_video_file, natural_key, find_similar_files, get_saved_directory
+from utils import is_video_file, natural_key, find_similar_files, get_saved_directory, safe_move_file, safe_delete_file
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -173,6 +172,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.labelSavePath.setStyleSheet("color: gray; font-size: 9pt; padding: 4px;")
         self._isSeeking = False
 
+        self.labelOverrideSave = QtWidgets.QLabel("Override save folder:")
+        self.lineEditOverrideSave = QtWidgets.QLineEdit(self)
+        self.lineEditOverrideSave.setPlaceholderText("Leave empty for default from config")
+        self.lineEditOverrideSave.setClearButtonEnabled(True)
+        self.lineEditOverrideSave.setMinimumWidth(280)
+        self.lineEditOverrideSave.textChanged.connect(self._update_save_path)
+
+        self.checkDoNotPlayNext = QtWidgets.QCheckBox("Do not play next file")
+        self.checkDoNotPlayNext.setToolTip("When checked, playback stops at the end of each file instead of advancing to the next.")
+
         # Layout
         central = QtWidgets.QWidget(self)
         self.setCentralWidget(central)
@@ -209,10 +218,16 @@ class MainWindow(QtWidgets.QMainWindow):
         mediaControlsBottom.addWidget(self.muteButton)
         mediaControlsBottom.addSpacing(6)
         mediaControlsBottom.addWidget(self.volumeSlider)
+        mediaControlsBottom.addSpacing(16)
+        mediaControlsBottom.addWidget(self.checkDoNotPlayNext)
         mediaControlsBottom.addStretch(1)
 
         mainLayout.addLayout(contentLayout, stretch=1)
         mainLayout.addLayout(timelineLayout)
+        overrideRow = QtWidgets.QHBoxLayout()
+        overrideRow.addWidget(self.labelOverrideSave)
+        overrideRow.addWidget(self.lineEditOverrideSave, stretch=1)
+        mainLayout.addLayout(overrideRow)
         mainLayout.addWidget(self.labelSavePath)
         mainLayout.addLayout(mediaControlsBottom)
 
@@ -338,13 +353,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.play_item_at(row)
 
     def current_row(self) -> int:
-        # Find row by current media source file path
+        # Find row by current media source file path (normalized so Windows path quirks don't break "play next")
         current_url = self.mediaPlayer.source().toLocalFile()
         if not current_url:
             return -1
+        norm = os.path.normcase(os.path.abspath(current_url))
         for i in range(self.playlist.count()):
             item = self.playlist.item(i)
-            if item.data(QtCore.Qt.ItemDataRole.UserRole) == current_url:
+            p = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if p and os.path.normcase(os.path.abspath(p)) == norm:
                 return i
         return -1
 
@@ -475,6 +492,19 @@ class MainWindow(QtWidgets.QMainWindow):
             muted = self.volumeSlider.value() == 0
         self.muteButton.setIcon(self.iconVolumeMuted if muted else self.iconVolume)
 
+    def _remove_playlist_item_by_path(self, file_path: str) -> int:
+        """Remove the playlist item whose path matches file_path (normalized). Returns the row that was removed, or -1 if not found."""
+        if not file_path:
+            return -1
+        norm = os.path.normcase(os.path.abspath(file_path))
+        for i in range(self.playlist.count() - 1, -1, -1):
+            item = self.playlist.item(i)
+            p = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if p and os.path.normcase(os.path.abspath(p)) == norm:
+                self.playlist.takeItem(i)
+                return i
+        return -1
+
     def delete_selected_files(self) -> None:
         rows = sorted({self.playlist.row(i) for i in self.playlist.selectedItems()}, reverse=True)
         if not rows:
@@ -484,11 +514,19 @@ class MainWindow(QtWidgets.QMainWindow):
         current_row_before = -1
         # Find the current row before deletion
         if current_file:
+            norm_current = os.path.normcase(os.path.abspath(current_file))
             for i in range(self.playlist.count()):
                 item = self.playlist.item(i)
-                if item.data(QtCore.Qt.ItemDataRole.UserRole) == current_file:
+                p = item.data(QtCore.Qt.ItemDataRole.UserRole)
+                if p and os.path.normcase(os.path.abspath(p)) == norm_current:
                     current_row_before = i
                     break
+
+        # If we're about to delete the currently playing file, release the handle first (Windows)
+        if current_file and current_row_before in rows:
+            self.mediaPlayer.stop()
+            self.mediaPlayer.setSource(QtCore.QUrl())
+            QtWidgets.QApplication.processEvents()
 
         removed_current = False
 
@@ -497,15 +535,17 @@ class MainWindow(QtWidgets.QMainWindow):
             file_path = item.data(QtCore.Qt.ItemDataRole.UserRole)
             # Remove from UI first
             self.playlist.takeItem(row)
-            # Delete file from filesystem
-            try:
-                if file_path and os.path.exists(file_path):
-                    os.remove(file_path)
-            except Exception as exc:
-                # Show a non-blocking error message in status bar
-                logger.error(f"Failed to delete file: {file_path}", exc_info=True)
-                self.statusBar().showMessage(f"Failed to delete: {file_path} ({exc})", 5000)
-            if file_path == current_file:
+            # Delete file from filesystem (with retries on Windows when in use)
+            if file_path:
+                deleted = safe_delete_file(Path(file_path))
+                if not deleted:
+                    self.statusBar().showMessage(
+                        f"Deleted from playlist; file in use: {file_path}. Delete manually if needed.",
+                        6000,
+                    )
+
+            norm_current = os.path.normcase(os.path.abspath(current_file)) if current_file else ""
+            if file_path and norm_current and os.path.normcase(os.path.abspath(file_path)) == norm_current:
                 removed_current = True
 
         if removed_current and current_row_before >= 0:
@@ -528,9 +568,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         current_file = self.mediaPlayer.source().toLocalFile()
         moved_current = False
-        
-        # Get saved directory (always returns a path now)
-        dest_dir = get_saved_directory()
+        # Stop and release the file handle before moving (Windows keeps file locked until source is cleared)
+        if current_file and any(
+            item.data(QtCore.Qt.ItemDataRole.UserRole) == current_file for item in items
+        ):
+            self.mediaPlayer.stop()
+            self.mediaPlayer.setSource(QtCore.QUrl())
+            QtWidgets.QApplication.processEvents()
+
+        # Get save directory (override or default from config)
+        dest_dir = self.get_save_directory_for_session()
 
         # Work on a copy to avoid selection issues during removal
         rows = sorted({self.playlist.row(i) for i in items}, reverse=True)
@@ -542,7 +589,7 @@ class MainWindow(QtWidgets.QMainWindow):
             src = Path(file_path)
             if not src.exists() or not src.is_file():
                 continue
-            
+
             try:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest = dest_dir / src.name
@@ -552,18 +599,25 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
                     continue
 
-                shutil.move(str(src), str(dest))
-                # Remove from playlist UI
-                self.playlist.takeItem(row)
+                copy_ok, source_removed = safe_move_file(src, dest)
+                if not copy_ok:
+                    raise OSError("Copy failed")
+                # Remove from playlist by path so we always remove the right entry
+                self._remove_playlist_item_by_path(file_path)
                 if file_path == current_file:
                     moved_current = True
+                if not source_removed:
+                    self.statusBar().showMessage(
+                        f"Saved to {dest}; original could not be removed (in use). Delete manually if needed.",
+                        6000,
+                    )
             except Exception as exc:
                 logger.error(f"Failed to save file: {src}", exc_info=True)
                 self.statusBar().showMessage(f"Failed to save: {src} ({exc})", 5000)
 
         if moved_current:
-            # Stop playback if the current file was moved
-            self.mediaPlayer.stop()
+            # Playback already stopped above if current was in selection
+            pass
         self._update_playlist_count()
 
     def save_current_and_play_next(self) -> None:
@@ -586,8 +640,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 current_row = i
                 break
 
-        # Get saved directory (always returns a path now)
-        dest_dir = get_saved_directory()
+        # Stop and release the file handle so Windows can release the lock before we move
+        self.mediaPlayer.stop()
+        self.mediaPlayer.setSource(QtCore.QUrl())
+        QtWidgets.QApplication.processEvents()
+
+        # Get save directory (override or default from config)
+        dest_dir = self.get_save_directory_for_session()
 
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -612,21 +671,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.play_next()
                 return
 
-            shutil.move(str(src), str(dest))
-            # Remove from playlist if found
-            if current_row >= 0:
-                self.playlist.takeItem(current_row)
-                # Play the item that is now at current_row (which was the next one)
-                if current_row < self.playlist.count():
-                    self.play_item_at(current_row)
+            copy_ok, source_removed = safe_move_file(src, dest)
+            if not copy_ok:
+                raise OSError("Copy failed")
+            if not source_removed:
+                self.statusBar().showMessage(
+                    f"Saved to {dest}; original could not be removed (in use). Delete manually if needed.",
+                    6000,
+                )
+            # Remove from playlist by path (in case current_row was wrong due to path format)
+            removed_row = self._remove_playlist_item_by_path(current_path)
+            if removed_row >= 0:
+                if removed_row < self.playlist.count():
+                    self.play_item_at(removed_row)
                 elif self.playlist.count() > 0:
-                    # If current_row was the last item, play the new last item
                     self.play_item_at(self.playlist.count() - 1)
                 else:
-                    # Playlist is empty, stop playback
                     self.mediaPlayer.stop()
             else:
-                # File wasn't in playlist, just stop
                 self.mediaPlayer.stop()
             self._update_playlist_count()
         except Exception as exc:
@@ -667,14 +729,16 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------- Media callbacks -------------------
     def on_media_status_changed(self, status: QtMultimedia.QMediaPlayer.MediaStatus) -> None:
         if status == QtMultimedia.QMediaPlayer.MediaStatus.EndOfMedia:
-            self.play_next()
+            if not self.checkDoNotPlayNext.isChecked():
+                self.play_next()
         elif status == QtMultimedia.QMediaPlayer.MediaStatus.InvalidMedia:
             # Skip unplayable files automatically without attempting any transcoding
             current = self.mediaPlayer.source().toLocalFile()
             if current:
                 logger.warning(f"Cannot play invalid media file: {current}")
                 self.statusBar().showMessage(f"Cannot play: {os.path.basename(current)} — skipping", 4000)
-            self.play_next()
+            if not self.checkDoNotPlayNext.isChecked():
+                self.play_next()
 
     def on_playback_state_changed(self, state: QtMultimedia.QMediaPlayer.PlaybackState) -> None:
         if state == QtMultimedia.QMediaPlayer.PlaybackState.PlayingState:
@@ -688,9 +752,11 @@ class MainWindow(QtWidgets.QMainWindow):
             current_path = self.mediaPlayer.source().toLocalFile()
         except Exception:
             current_path = ""
+        norm_current = os.path.normcase(os.path.abspath(current_path)) if current_path else ""
         for i in range(self.playlist.count()):
             item = self.playlist.item(i)
-            is_current = item.data(QtCore.Qt.ItemDataRole.UserRole) == current_path
+            p = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            is_current = bool(p and norm_current and os.path.normcase(os.path.abspath(p)) == norm_current)
             # Background color: light yellow for current, white otherwise
             bg = QtGui.QColor("#FFF7CC") if is_current else QtGui.QColor("white")
             item.setBackground(QtGui.QBrush(bg))
@@ -707,12 +773,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.labelPlaylistCount.setText(f"{current_num}/{total}")
         self._update_save_path()
 
+    def get_save_directory_for_session(self) -> Path:
+        """Return override folder if set, otherwise the default from config."""
+        override = self.lineEditOverrideSave.text().strip()
+        if override:
+            return Path(override)
+        return get_saved_directory()
+
     def _update_save_path(self) -> None:
-        """Update the save path label based on the saved directory."""
-        
+        """Update the save path label based on the effective saved directory."""
         if self.playlist.count() == 0:
             self.labelSavePath.setText("")
             return
-        
-        save_target_dir = get_saved_directory()
+        save_target_dir = self.get_save_directory_for_session()
         self.labelSavePath.setText(f"Save to: {save_target_dir}")
