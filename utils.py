@@ -17,10 +17,28 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 import re
 import os
+import shutil
+import sys
+import time
+import hashlib
 from logger import get_logger
+
+CHUNK_SIZE = 1024 * 1024  # 1 MiB for checksum read
+
+
+def file_checksum(path: Path, algorithm: str = "sha256") -> str:
+    """Compute hex digest of file contents (chunked read for large files)."""
+    h = hashlib.new(algorithm)
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 logger = get_logger(__name__)
 
@@ -107,6 +125,85 @@ def find_similar_files(reference_path: Path) -> List[Path]:
 
     candidates.sort(key=lambda p: natural_key(p.name))
     return candidates
+
+
+def safe_move_file(src: Path, dest: Path) -> Tuple[bool, bool]:
+    """
+    Copy file to dest, verify copy by checksum, then remove source.
+    On Windows, the source is often locked; we retry the delete a few times.
+    Returns (copy_ok, source_removed). If copy_ok is True but source_removed is False,
+    the file is at dest and the caller may inform the user to delete the original manually.
+    """
+    try:
+        shutil.copy2(str(src), str(dest))
+    except Exception as exc:
+        logger.warning(f"safe_move_file: copy failed {src} -> {dest}: {exc}")
+        return (False, False)
+
+    if not dest.exists() or not dest.is_file():
+        logger.warning(f"safe_move_file: copy completed but dest missing: {dest}")
+        return (False, False)
+
+    try:
+        src_hash = file_checksum(src)
+        dest_hash = file_checksum(dest)
+        if src_hash != dest_hash:
+            logger.warning(f"safe_move_file: checksum mismatch src={src_hash[:16]}... dest={dest_hash[:16]}...")
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            return (False, False)
+    except Exception as exc:
+        logger.warning(f"safe_move_file: checksum verification failed: {exc}")
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        return (False, False)
+
+    # Retry delete on Windows when file may still be in use (e.g. player releasing handle)
+    max_attempts = 15 if sys.platform == "win32" else 1
+    delay = 0.4 if sys.platform == "win32" else 0
+    for attempt in range(max_attempts):
+        try:
+            os.remove(str(src))
+            return (True, True)
+        except PermissionError as e:
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+            else:
+                logger.warning(f"safe_move_file: could not remove source (in use): {src}: {e}")
+                return (True, False)
+        except OSError as e:
+            logger.warning(f"safe_move_file: could not remove source: {src}: {e}")
+            return (True, False)
+    return (True, False)
+
+
+def safe_delete_file(path: Path) -> bool:
+    """
+    Remove a file, with retries on Windows when the file is in use (e.g. media player).
+    Returns True if deleted, False if still locked after retries.
+    """
+    if not path.exists() or not path.is_file():
+        return True
+    max_attempts = 15 if sys.platform == "win32" else 1
+    delay = 0.4 if sys.platform == "win32" else 0
+    for attempt in range(max_attempts):
+        try:
+            os.remove(str(path))
+            return True
+        except PermissionError as e:
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+            else:
+                logger.warning(f"safe_delete_file: could not remove (in use): {path}: {e}")
+                return False
+        except OSError as e:
+            logger.warning(f"safe_delete_file: could not remove: {path}: {e}")
+            return False
+    return False
 
 
 def get_saved_directory() -> Path:
