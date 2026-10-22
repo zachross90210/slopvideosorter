@@ -44,6 +44,21 @@ def is_video_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
 
 
+def unique_dest_path(dest_dir: Path, filename: str) -> Path:
+    """Return dest_dir/filename, or stem_2.ext, stem_3.ext, ... if taken."""
+    dest = dest_dir / filename
+    if not dest.exists():
+        return dest
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    n = 2
+    while True:
+        candidate = dest_dir / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def natural_key(text: str) -> List[object]:
     # Split into digit and non-digit parts to get natural sorting
     return [int(s) if s.isdigit() else s.lower() for s in re.split(r"(\d+)", text)]

@@ -24,7 +24,7 @@ from pathlib import Path
 from widgets.playlist_widget import PlaylistWidget
 from widgets.video_widget import DroppableVideoWidget
 from widgets.slider_widget import SeekSlider, VolumeSlider
-from utils import is_video_file, natural_key, find_similar_files, get_saved_directory
+from utils import is_video_file, natural_key, find_similar_files, get_saved_directory, unique_dest_path
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -342,9 +342,12 @@ class MainWindow(QtWidgets.QMainWindow):
         current_url = self.mediaPlayer.source().toLocalFile()
         if not current_url:
             return -1
+        # Normalize so Qt's forward-slash paths match Path.resolve() backslashes on Windows
+        current_norm = os.path.normcase(os.path.normpath(current_url))
         for i in range(self.playlist.count()):
             item = self.playlist.item(i)
-            if item.data(QtCore.Qt.ItemDataRole.UserRole) == current_url:
+            stored = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if stored and os.path.normcase(os.path.normpath(stored)) == current_norm:
                 return i
         return -1
 
@@ -545,12 +548,7 @@ class MainWindow(QtWidgets.QMainWindow):
             
             try:
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                dest = dest_dir / src.name
-                # If destination exists, skip to avoid overwrite
-                if dest.exists():
-                    logger.info(f"Skipping save (file exists): {dest}")
-                    self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
-                    continue
+                dest = unique_dest_path(dest_dir, src.name)
 
                 shutil.move(str(src), str(dest))
                 # Remove from playlist UI
@@ -591,26 +589,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / src.name
-            if dest.exists():
-                logger.info(f"Skipping save (file exists): {dest}")
-                self.statusBar().showMessage(f"Skip (exists): {dest}", 4000)
-                # Still play next even if file exists
-                # Remove from playlist if found and play next
-                if current_row >= 0:
-                    self.playlist.takeItem(current_row)
-                    # Play the item that is now at current_row (which was the next one)
-                    if current_row < self.playlist.count():
-                        self.play_item_at(current_row)
-                    elif self.playlist.count() > 0:
-                        # If current_row was the last item, play the new last item
-                        self.play_item_at(self.playlist.count() - 1)
-                    else:
-                        # Playlist is empty, stop playback
-                        self.mediaPlayer.stop()
-                else:
-                    self.play_next()
-                return
+            dest = unique_dest_path(dest_dir, src.name)
 
             shutil.move(str(src), str(dest))
             # Remove from playlist if found
